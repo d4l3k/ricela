@@ -263,8 +263,8 @@ func (r *RiceLa) monitorVehicle(ctx context.Context, v *tesla.Vehicle) error {
 			return err
 		}
 
-		voltage, _ := data.ChargeState.ChargerVoltage.(float64)
-		if data.ChargeState.ChargingState == "Complete" && voltage > 50 {
+		pilotCurrent, _ := data.ChargeState.ChargerPilotCurrent.(float64)
+		if data.ChargeState.ChargingState == "Complete" && pilotCurrent > 1 {
 			if err := r.stopCharging(ctx); err != nil {
 				return err
 			}
