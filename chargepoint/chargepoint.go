@@ -2,6 +2,7 @@ package chargepoint
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -18,6 +19,7 @@ const (
 	AccountEndpoint  = "https://account.chargepoint.com/account/v1"
 	SessionAckPath   = "/driver/station/session/ack"
 	SessionStartPath = "/driver/station/startsession"
+	SessionStopPath  = "/driver/station/stopsession"
 	MapProdEndpoint  = "https://mc.chargepoint.com/map-prod/v2"
 )
 
@@ -47,21 +49,26 @@ type DeviceData struct {
 
 type StartSessionRequest struct {
 	DeviceData DeviceData `json:"deviceData"`
-	DeviceID   int        `json:"deviceId"`
+	DeviceID   int64      `json:"deviceId"`
+}
+
+type StopSessionRequest struct {
+	DeviceID  int64 `json:"deviceId"`
+	SessionID int64 `json:"sessionId"`
 }
 
 type StartSessionResponse struct {
-	AckID            int  `json:"ackId"`
-	PurposeFinalized bool `json:"purposeFinalized"`
+	AckID            int64 `json:"ackId"`
+	PurposeFinalized bool  `json:"purposeFinalized"`
 }
 
 type SessionAckRequest struct {
-	AckID  int    `json:"ackId"`
+	AckID  int64  `json:"ackId"`
 	Action string `json:"action"`
 }
 
 type SessionAckResponse struct {
-	SessionID int `json:"sessionId"`
+	SessionID int64 `json:"sessionId"`
 }
 
 type ChargingSession struct {
@@ -156,16 +163,14 @@ type MapProdResponse struct {
 			MilesAdded struct {
 				Public int `json:"public"`
 			} `json:"miles_added"`
-			VehicleInfo struct {
-				Num19488011 struct {
-					Year             int     `json:"year"`
-					EvRange          int     `json:"ev_range"`
-					IsPrimaryVehicle bool    `json:"is_primary_vehicle"`
-					Model            string  `json:"model"`
-					BatteryCapacity  float64 `json:"battery_capacity"`
-					VehicleID        int     `json:"vehicle_id"`
-					Make             string  `json:"make"`
-				} `json:"19488011"`
+			VehicleInfo map[string]struct {
+				Year             int     `json:"year"`
+				EvRange          int     `json:"ev_range"`
+				IsPrimaryVehicle bool    `json:"is_primary_vehicle"`
+				Model            string  `json:"model"`
+				BatteryCapacity  float64 `json:"battery_capacity"`
+				VehicleID        int     `json:"vehicle_id"`
+				Make             string  `json:"make"`
 			} `json:"vehicle_info"`
 		} `json:"month_info"`
 		PageOffset string `json:"page_offset"`
@@ -176,14 +181,14 @@ type UserStatusResponse struct {
 	UserStatus UserStatus `json:"user_status"`
 }
 type Stations struct {
-	DeviceID int     `json:"deviceId"`
+	DeviceID int64   `json:"deviceId"`
 	Lat      float64 `json:"lat"`
 	Lon      float64 `json:"lon"`
 	Name     string  `json:"name"`
 }
 type Charging struct {
 	CurrentTimeUTC int        `json:"currentTimeUTC"`
-	SessionID      int        `json:"sessionId"`
+	SessionID      int64      `json:"sessionId"`
 	StartTimeUTC   int        `json:"startTimeUTC"`
 	State          string     `json:"state"`
 	Stations       []Stations `json:"stations"`
@@ -198,21 +203,21 @@ type UserStatusRequest struct {
 	} `json:"user_status"`
 }
 
-func (c *Client) UserStatus() (UserStatus, error) {
+func (c *Client) UserStatus(ctx context.Context) (UserStatus, error) {
 	var resp UserStatusResponse
-	if err := c.makeRequest(MapProdEndpoint, UserStatusRequest{}, &resp); err != nil {
+	if err := c.makeRequest(ctx, MapProdEndpoint, UserStatusRequest{}, &resp); err != nil {
 		return UserStatus{}, err
 	}
 	return resp.UserStatus, nil
 }
 
-func (c *Client) GetSessions() ([]ChargingSession, error) {
+func (c *Client) GetSessions(ctx context.Context) ([]ChargingSession, error) {
 	var req ChargingActivityMonthlyRequest
 	//req.UserID = c.UserID
 	req.ChargingActivityMonthly.PageSize = 1000
 
 	var resp MapProdResponse
-	if err := c.makeRequest(MapProdEndpoint, req, &resp); err != nil {
+	if err := c.makeRequest(ctx, MapProdEndpoint, req, &resp); err != nil {
 		return nil, err
 	}
 
@@ -226,10 +231,21 @@ func (c *Client) GetSessions() ([]ChargingSession, error) {
 	return sessions, nil
 }
 
-func (c *Client) StartSession(id int) (int, error) {
+func (c *Client) StopSession(ctx context.Context, sessionID, deviceID int64) error {
+	var resp struct{}
+	if err := c.makeRequest(ctx, AccountEndpoint+SessionStopPath, StopSessionRequest{
+		SessionID: sessionID,
+		DeviceID:  deviceID,
+	}, &resp); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Client) StartSession(ctx context.Context, deviceID int64) (int64, error) {
 	var resp StartSessionResponse
-	if err := c.makeRequest(AccountEndpoint+SessionStartPath, StartSessionRequest{
-		DeviceID: id,
+	if err := c.makeRequest(ctx, AccountEndpoint+SessionStartPath, StartSessionRequest{
+		DeviceID: deviceID,
 		DeviceData: DeviceData{
 			Manufacturer:       "unknown",
 			Model:              "unknown",
@@ -247,7 +263,7 @@ func (c *Client) StartSession(id int) (int, error) {
 	b := backoff.NewExponentialBackOff()
 	b.MaxElapsedTime = 1 * time.Minute
 	if err := backoff.Retry(func() error {
-		return c.makeRequest(AccountEndpoint+SessionAckPath, SessionAckRequest{
+		return c.makeRequest(ctx, AccountEndpoint+SessionAckPath, SessionAckRequest{
 			AckID:  resp.AckID,
 			Action: "start_session",
 		}, &ackResp)
@@ -258,12 +274,15 @@ func (c *Client) StartSession(id int) (int, error) {
 	return ackResp.SessionID, nil
 }
 
-func (c *Client) makeRequest(targetURL string, request interface{}, response interface{}) error {
+func (c *Client) makeRequest(ctx context.Context, targetURL string, request interface{}, response interface{}) error {
+	ctx, cancel := context.WithTimeout(ctx, 1*time.Minute)
+	defer cancel()
+
 	reqBody, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest("POST", targetURL, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return err
 	}
@@ -293,7 +312,10 @@ func (c *Client) makeRequest(targetURL string, request interface{}, response int
 	// map prod errors
 	errMap := map[string]MapProdError{}
 	if err := json.Unmarshal(respBody, &errMap); err != nil {
-		return err
+		if err, ok := err.(*json.UnmarshalTypeError); ok {
+		} else {
+			return err
+		}
 	}
 	for _, err := range errMap {
 		if err.Error() != "" {
