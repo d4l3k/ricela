@@ -27,10 +27,11 @@ import (
 )
 
 var (
-	bind            = flag.String("bind", ":2112", "address to bind to")
-	standbyPollTime = flag.Duration("standbyPollTime", 1*time.Minute, "polling frequency")
-	drivePollTime   = flag.Duration("drivePollTime", 15*time.Second, "polling frequency")
-	activePollTime  = flag.Duration("activePollTime", 5*time.Second, "polling frequency")
+	bind                = flag.String("bind", ":2112", "address to bind to")
+	standbyPollTime     = flag.Duration("standbyPollTime", 1*time.Minute, "polling frequency")
+	drivePollTime       = flag.Duration("drivePollTime", 15*time.Second, "polling frequency")
+	activePollTime      = flag.Duration("activePollTime", 5*time.Second, "polling frequency")
+	chargePointPollTime = flag.Duration("chargePointPollTime", 5*time.Minute, "polling frequency")
 )
 
 type Charger interface {
@@ -321,6 +322,41 @@ func (r *RiceLa) run() error {
 			})
 		}
 		return nil
+	})
+
+	eg.Go(func() error {
+		for {
+			sessions, err := r.chargepoint.GetSessions(ctx)
+			if err != nil {
+				log.Println("chargpoint stats error", err)
+			}
+			if len(sessions) > 0 {
+				lastSession := sessions[len(sessions)-1]
+				r.setCounter("chargepoint:latest:total_amount", lastSession.TotalAmount)
+				r.setCounter("chargepoint:latest:miles_added", lastSession.MilesAdded)
+				r.setCounter("chargepoint:latest:energy_kwh", lastSession.EnergyKwh)
+				r.setCounter("chargepoint:latest:power_kw", lastSession.PowerKw)
+				r.setCounter("chargepoint:latest:latitude", lastSession.Lat)
+				r.setCounter("chargepoint:latest:longitude", lastSession.Lon)
+			}
+
+			var totalAmount, milesAdded, energyKwh float64
+			for _, session := range sessions {
+				totalAmount += session.TotalAmount
+				milesAdded += session.MilesAdded
+				energyKwh += session.EnergyKwh
+			}
+
+			r.setCounter("chargepoint:total_amount", totalAmount)
+			r.setCounter("chargepoint:miles_added", milesAdded)
+			r.setCounter("chargepoint:energy_kwh", energyKwh)
+
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.NewTimer(*chargePointPollTime).C:
+			}
+		}
 	})
 
 	s := http.Server{
