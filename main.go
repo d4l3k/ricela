@@ -129,14 +129,15 @@ func (r *RiceLa) getVehicleData(ctx context.Context, v *tesla.Vehicle) (*Vehicle
 	if err != nil {
 		return nil, err
 	}
-	if res.StatusCode != 200 {
-		return nil, errors.New(res.Status)
-	}
 	defer res.Body.Close()
 
 	body, err := ioutil.ReadAll(res.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	if res.StatusCode != 200 {
+		return nil, errors.Errorf("%s: %s", res.Status, body)
 	}
 
 	out := map[string]interface{}{}
@@ -279,6 +280,9 @@ func (r *RiceLa) monitorVehicle(ctx context.Context, v *tesla.Vehicle) error {
 		if err := backoff.Retry(func() error {
 			var err error
 			data, err = r.getVehicleData(ctx, v)
+			if err != nil {
+				log.Printf("got error polling (likely retrying) %+v", err)
+			}
 			return err
 		}, b); err != nil {
 			return err
@@ -328,6 +332,7 @@ func (r *RiceLa) run() error {
 	if err != nil {
 		return errors.Wrapf(err, "failed to create client")
 	}
+	log.Printf("Tesla token: %+v", r.client.Token)
 
 	r.chargepoint = &chargepoint.Client{
 		Token: os.Getenv("CHARGEPOINT_TOKEN"),
