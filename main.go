@@ -15,6 +15,7 @@ import (
 
 	"github.com/cenkalti/backoff"
 	"github.com/d4l3k/ricela/chargepoint"
+	"github.com/d4l3k/ricela/sysmetrics"
 	"github.com/golang/geo/s2"
 
 	"github.com/davecgh/go-spew/spew"
@@ -350,6 +351,10 @@ func (r *RiceLa) run() error {
 			})
 		}
 		return nil
+	})
+
+	eg.Go(func() error {
+		return sysmetrics.Monitor(ctx, *drivePollTime)
 	})
 
 	eg.Go(func() error {
