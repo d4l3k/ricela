@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+const (
+	PedalPositionPctKey = "pedal_position_pct"
+	SignedSpeedKey      = "signed_speed"
+
+	GearKey     = "gear"
+	GearDrive   = 4
+	GearReverse = 2
+)
+
 type Frame struct {
 	ID        int // 29 bit if ide set, 11 bit otherwise
 	Data      [8]byte
@@ -82,10 +91,10 @@ func FrameToKV(frame Frame) map[string]float64 {
 	case 0x118:
 		set("drive_state", frame.ReadFloat(3, 16, 0, 1))
 		set("brake_pedal", frame.ReadFloat(2, 19, 0, 1))
-		set("gear", frame.ReadFloat(3, 21, 0, 1))
+		set(GearKey, frame.ReadFloat(3, 21, 0, 1))
 		set("brake_hold", frame.ReadFloat(1, 26, 0, 1))
 		set("immobilizer", frame.ReadFloat(3, 27, 0, 1))
-		set("pedal_position_pct", frame.ReadFloat(8, 32, 0, 0.4))
+		set(PedalPositionPctKey, frame.ReadFloat(8, 32, 0, 0.4))
 		set("traction_control", frame.ReadFloat(3, 40, 0, 1))
 		set("parking_brake", frame.ReadFloat(2, 44, 0, 1))
 		set("track_mode", frame.ReadFloat(2, 48, 0, 1))
@@ -130,7 +139,7 @@ func FrameToKV(frame Frame) map[string]float64 {
 		set("max_heat_parked_kw", frame.ReadFloat(10, 32, 0, 0.1))
 		set("hvac_max_power_kw", frame.ReadFloat(10, 50, 0, 0.02))
 	case 0x257:
-		set("signed_speed", frame.ReadFloat(12, 12, -25, 0.05))
+		set(SignedSpeedKey, frame.ReadFloat(12, 12, -25, 0.05))
 		set("ui_speed", frame.ReadFloat(8, 24, 0, 1))
 		set("mph_kph_flag", frame.ReadFloat(1, 32, 0, 1))
 	case 0x261:
@@ -192,7 +201,8 @@ func FrameToKV(frame Frame) map[string]float64 {
 		set("rear_oil_flow_target_lpm", frame.ReadFloat(8, 8, 0, 0.06))
 		set("rear_oil_flow_actual_lpm", frame.ReadFloat(8, 16, 0, 0.06))
 	case 0x3B6:
-		set("odometer_meter", frame.ReadFloat(32, 0, 0, 1))
+		set("odometer_meter", frame.ReadFloat(32, 0, 0, 0.001))
+		set("odometer_miles", frame.ReadFloat(32, 0, 0, 0.000621371))
 	case 0x3D2:
 		set("total_discharge_kwh", frame.ReadFloat(32, 0, 0, 0.001))
 		set("total_charge_kwh", frame.ReadFloat(32, 32, 0, 0.001))

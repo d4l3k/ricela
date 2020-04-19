@@ -3,6 +3,7 @@ package sysmetrics
 import (
 	"context"
 	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
 	"regexp"
@@ -130,7 +131,9 @@ func monitorNAS(ctx context.Context) error {
 	if !fileExists(device) {
 		return nil
 	}
-	out, err := exec.CommandContext(ctx, "qmicli", "-d", device, "--nas-get-signal-info").Output()
+	out, err := exec.CommandContext(
+		ctx, "qmicli", "-d", device, "--nas-get-signal-info", "--client-cid=19", "--client-no-release-cid",
+	).Output()
 	if err != nil {
 		return err
 	}
@@ -146,13 +149,13 @@ func Monitor(ctx context.Context, interval time.Duration) error {
 
 	for {
 		if err := monitorLMSensors(); err != nil {
-			return err
+			log.Printf("error monitoring sensors: %+v", err)
 		}
 		if err := monitorArmTemp(); err != nil {
-			return err
+			log.Printf("error monitoring arm temperature: %+v", err)
 		}
 		if err := monitorNAS(ctx); err != nil {
-			return err
+			log.Printf("error monitoring NAS info: %+v", err)
 		}
 
 		select {

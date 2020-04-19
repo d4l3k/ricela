@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"regexp"
 	"time"
@@ -16,9 +17,10 @@ import (
 )
 
 var (
-	graph    = flag.Bool("graph", false, "whether to graph the series")
-	filter   = flag.String("filter", "", "regexp filter for the keys")
-	hidezero = flag.Bool("hidezero", false, "hide all zero values")
+	graph       = flag.Bool("graph", false, "whether to graph the series")
+	filter      = flag.String("filter", "", "regexp filter for the keys")
+	hidezero    = flag.Bool("hidezero", false, "hide all zero values")
+	zerotosixty = flag.Bool("zerotosixty", false, "estimate 0-60 times")
 )
 
 func main() {
@@ -62,10 +64,18 @@ func run() error {
 		Y float64
 	}
 
+	var speeds []Point
+
 	series := map[string][]Point{}
 
 	for _, record := range records {
+		dur := record.Time.Sub(start)
 		for key, value := range can.FrameToKV(record.Frame) {
+			point := Point{X: dur, Y: value}
+			if key == can.SignedSpeedKey {
+				speeds = append(speeds, point)
+			}
+
 			match, err := regexp.MatchString(*filter, key)
 			if err != nil {
 				return err
@@ -75,7 +85,7 @@ func run() error {
 			}
 
 			if *graph {
-				series[key] = append(series[key], Point{X: record.Time.Sub(start), Y: value})
+				series[key] = append(series[key], point)
 			} else {
 				if *hidezero && value == 0 {
 					continue
@@ -88,9 +98,18 @@ func run() error {
 	for key, values := range series {
 		data := make([]float64, graphWidth)
 		bucketVals := map[int]float64{}
+		min := math.MaxFloat64
+		max := -math.MaxFloat64
 		for _, value := range values {
 			bucket := int(value.X / step)
 			bucketVals[bucket] = value.Y
+
+			if value.Y > max {
+				max = value.Y
+			}
+			if value.Y < min {
+				min = value.Y
+			}
 		}
 
 		value := values[0].Y
@@ -112,8 +131,30 @@ func run() error {
 				asciigraph.Caption(fmt.Sprintf("%s - %s", start, end)),
 			))
 		}
+		fmt.Printf("max = %f, min = %f\n", max, min)
 		fmt.Println()
 	}
+
+	if *zerotosixty {
+		var low Point
+		for _, speed := range speeds {
+			if speed.Y < 5 {
+				low = speed
+			}
+			if speed.Y > 60 && low.X != 0 {
+				timepermph := float64(speed.X-low.X) / (speed.Y - low.Y)
+				fmt.Println("start", low)
+				fmt.Println("end", speed)
+
+				adjustedLow := low.X - time.Duration(timepermph*low.Y)
+				adjustedHigh := speed.X + time.Duration(timepermph*(60-speed.Y))
+				fmt.Println("estimated 0-60:", adjustedHigh-adjustedLow)
+
+				low = Point{}
+			}
+		}
+	}
+
 	return nil
 }
 

@@ -3,6 +3,7 @@ module github.com/d4l3k/ricela
 go 1.14
 
 require (
+	github.com/alecthomas/units v0.0.0-20190924025748-f65c72e2690d
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/davecgh/go-spew v1.1.1
 	github.com/golang/geo v0.0.0-20200319012246-673a6f80352d
