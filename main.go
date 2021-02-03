@@ -314,6 +314,13 @@ func (r *RiceLa) monitorVehicle(ctx context.Context, v *tesla.Vehicle) error {
 	}
 }
 
+type Token struct {
+	AccessToken string `json:"access_token"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int64  `json:"expires_in"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
 func (r *RiceLa) run() error {
 	r.mu.gauges = map[string]prometheus.Gauge{}
 
@@ -322,13 +329,24 @@ func (r *RiceLa) run() error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 
+	tokenJSON := os.Getenv("TESLA_TOKEN_JSON")
+	var token Token
+	if err := json.Unmarshal([]byte(tokenJSON), &token); err != nil {
+		return err
+	}
+
 	var err error
-	r.client, err = tesla.NewClient(
+	r.client, err = tesla.NewClientWithToken(
 		&tesla.Auth{
 			ClientID:     os.Getenv("TESLA_CLIENT_ID"),
 			ClientSecret: os.Getenv("TESLA_CLIENT_SECRET"),
 			Email:        os.Getenv("TESLA_USERNAME"),
 			Password:     os.Getenv("TESLA_PASSWORD"),
+		}, &tesla.Token{
+			AccessToken: token.AccessToken,
+			TokenType:   token.TokenType,
+			ExpiresIn:   int(token.ExpiresIn),
+			Expires:     token.CreatedAt + token.ExpiresIn,
 		})
 	if err != nil {
 		return errors.Wrapf(err, "failed to create client")
