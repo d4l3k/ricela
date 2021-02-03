@@ -132,7 +132,7 @@ func monitorNAS(ctx context.Context) error {
 		return nil
 	}
 	out, err := exec.CommandContext(
-		ctx, "qmicli", "-d", device, "--nas-get-signal-info", "--client-cid=19", "--client-no-release-cid",
+		ctx, "qmicli", "-d", device, "--nas-get-signal-info", "--client-cid=19", "--client-no-release-cid", "-p",
 	).Output()
 	if err != nil {
 		return err
