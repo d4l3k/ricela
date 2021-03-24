@@ -23,6 +23,11 @@ const (
 	MapProdEndpoint  = "https://mc.chargepoint.com/map-prod/v2"
 )
 
+const (
+	ChargingDone         = "done"
+	ChargingFullyCharged = "fully_charged"
+)
+
 type Client struct {
 	Token string
 }

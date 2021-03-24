@@ -377,32 +377,36 @@ func (r *RiceLa) run() error {
 
 	eg.Go(func() error {
 		for {
-			if r.charging() {
-				sessions, err := r.chargepoint.GetSessions(ctx)
-				if err != nil {
-					log.Println("chargpoint stats error", err)
-				}
-				if len(sessions) > 0 {
-					lastSession := sessions[len(sessions)-1]
-					r.setCounter("chargepoint:latest:total_amount", lastSession.TotalAmount)
-					r.setCounter("chargepoint:latest:miles_added", lastSession.MilesAdded)
-					r.setCounter("chargepoint:latest:energy_kwh", lastSession.EnergyKwh)
-					r.setCounter("chargepoint:latest:power_kw", lastSession.PowerKw)
-					r.setCounter("chargepoint:latest:latitude", lastSession.Lat)
-					r.setCounter("chargepoint:latest:longitude", lastSession.Lon)
-				}
-
-				var totalAmount, milesAdded, energyKwh float64
-				for _, session := range sessions {
-					totalAmount += session.TotalAmount
-					milesAdded += session.MilesAdded
-					energyKwh += session.EnergyKwh
-				}
-
-				r.setCounter("chargepoint:total_amount", totalAmount)
-				r.setCounter("chargepoint:miles_added", milesAdded)
-				r.setCounter("chargepoint:energy_kwh", energyKwh)
+			sessions, err := r.chargepoint.GetSessions(ctx)
+			if err != nil {
+				log.Println("chargpoint stats error", err)
 			}
+			if len(sessions) > 0 {
+				lastSession := sessions[len(sessions)-1]
+				r.setCounter("chargepoint:latest:total_amount", lastSession.TotalAmount)
+				r.setCounter("chargepoint:latest:miles_added", lastSession.MilesAdded)
+				r.setCounter("chargepoint:latest:energy_kwh", lastSession.EnergyKwh)
+				r.setCounter("chargepoint:latest:power_kw", lastSession.PowerKw)
+				r.setCounter("chargepoint:latest:latitude", lastSession.Lat)
+				r.setCounter("chargepoint:latest:longitude", lastSession.Lon)
+
+				if lastSession.CurrentCharging == chargepoint.ChargingFullyCharged {
+					if err := r.stopCharging(ctx); err != nil {
+						return err
+					}
+				}
+			}
+
+			var totalAmount, milesAdded, energyKwh float64
+			for _, session := range sessions {
+				totalAmount += session.TotalAmount
+				milesAdded += session.MilesAdded
+				energyKwh += session.EnergyKwh
+			}
+
+			r.setCounter("chargepoint:total_amount", totalAmount)
+			r.setCounter("chargepoint:miles_added", milesAdded)
+			r.setCounter("chargepoint:energy_kwh", energyKwh)
 
 			select {
 			case <-ctx.Done():
