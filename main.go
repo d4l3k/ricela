@@ -33,6 +33,7 @@ var (
 	drivePollTime       = flag.Duration("drivePollTime", 15*time.Second, "polling frequency")
 	activePollTime      = flag.Duration("activePollTime", 5*time.Second, "polling frequency")
 	chargePointPollTime = flag.Duration("chargePointPollTime", 5*time.Minute, "polling frequency")
+	carServerAddr       = flag.String("carserver", "http://localhost:27654/diag_vitals", "car server vitals endpoint")
 )
 
 const (
@@ -158,6 +159,32 @@ func (r *RiceLa) getVehicleData(ctx context.Context, v *tesla.Vehicle) (*Vehicle
 	return &resp.Response, nil
 }
 
+var counterStrs = map[string]float64{
+	"--":         -1,
+	"NONE":       -1,
+	"PRESENT":    1,
+	"ENGAGED":    1,
+	"DISENGAGED": 0,
+	"LATCHED":    1,
+	"NOMINAL":    1,
+	"FAULT":      0,
+	"ERROR":      0,
+	"DRIVE":      2,
+	"PARKED":     1,
+	"REVERSE":    3,
+	"NEUTRAL":    4,
+	"On":         1,
+	"Off":        0,
+	"Stopped":    0,
+	"IDLE":       0,
+	"ACTIVE":     1,
+	"on":         1,
+	"off":        0,
+	"yes":        1,
+	"no":         0,
+	"":           -1,
+}
+
 func (r *RiceLa) processCounter(key string, v interface{}) int {
 	switch v := v.(type) {
 	case map[string]interface{}:
@@ -189,6 +216,19 @@ func (r *RiceLa) processCounter(key string, v interface{}) int {
 			r.setCounter(key, 0)
 		}
 		return 1
+	case string:
+		f, err := strconv.ParseFloat(v, 64)
+		if err == nil {
+			r.setCounter(key, f)
+			return 1
+		}
+
+		f, ok := counterStrs[v]
+		if ok {
+			r.setCounter(key, f)
+			return 1
+		}
+		return 0
 	default:
 		if v == nil {
 			r.setCounter(key, 0)
@@ -321,6 +361,27 @@ type Token struct {
 	CreatedAt   int64  `json:"created_at"`
 }
 
+func (r *RiceLa) pollCarServer() error {
+	res, err := http.Get(*carServerAddr)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != 200 {
+		return errors.Errorf("%s", res.Status)
+	}
+
+	out := map[string]interface{}{}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return err
+	}
+	spew.Dump(out)
+
+	r.processCounter("carserver", out)
+	return nil
+}
+
 func (r *RiceLa) run() error {
 	r.mu.gauges = map[string]prometheus.Gauge{}
 
@@ -349,27 +410,29 @@ func (r *RiceLa) run() error {
 			Expires:     token.CreatedAt + token.ExpiresIn,
 		})
 	if err != nil {
-		return errors.Wrapf(err, "failed to create client")
+		log.Printf("%+v", errors.Wrapf(err, "failed to create client"))
 	}
-	log.Printf("Tesla token: %+v", r.client.Token)
 
 	r.chargepoint = &chargepoint.Client{
 		Token: os.Getenv("CHARGEPOINT_TOKEN"),
 	}
 
-	eg.Go(func() error {
-		vehicles, err := r.client.Vehicles()
-		if err != nil {
-			return errors.Wrapf(err, "failed to get vehicles")
-		}
-		for _, v := range vehicles {
-			v := v
-			eg.Go(func() error {
-				return r.monitorVehicle(ctx, v.Vehicle)
-			})
-		}
-		return nil
-	})
+	if r.client != nil {
+		log.Printf("Tesla token: %+v", r.client.Token)
+		eg.Go(func() error {
+			vehicles, err := r.client.Vehicles()
+			if err != nil {
+				return errors.Wrapf(err, "failed to get vehicles")
+			}
+			for _, v := range vehicles {
+				v := v
+				eg.Go(func() error {
+					return r.monitorVehicle(ctx, v.Vehicle)
+				})
+			}
+			return nil
+		})
+	}
 
 	eg.Go(func() error {
 		return sysmetrics.Monitor(ctx, *drivePollTime)
@@ -392,7 +455,7 @@ func (r *RiceLa) run() error {
 
 				if lastSession.CurrentCharging == chargepoint.ChargingFullyCharged {
 					if err := r.stopCharging(ctx); err != nil {
-						return err
+						log.Printf("failed to stop charging: %+v", err)
 					}
 				}
 			}
@@ -412,6 +475,20 @@ func (r *RiceLa) run() error {
 			case <-ctx.Done():
 				return nil
 			case <-time.NewTimer(*chargePointPollTime).C:
+			}
+		}
+	})
+
+	eg.Go(func() error {
+		for {
+			if err := r.pollCarServer(); err != nil {
+				log.Printf("car server error %+v", err)
+			}
+
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.NewTimer(*drivePollTime).C:
 			}
 		}
 	})
